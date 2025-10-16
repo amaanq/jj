@@ -43,6 +43,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   highlighted as "added" in editors when checking out a conflicted commit in a
   colocated workspace.
 
+* New `diff_lines_added()` and `diff_lines_removed()` revset functions for
+  matching content on only one side of a diff.
+
 ### Fixed bugs
 
 ## [0.38.0] - 2026-02-04
