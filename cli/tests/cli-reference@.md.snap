@@ -16,6 +16,7 @@ This document contains the help content for the `jj` command-line program.
 * [`jj bisect`↴](#jj-bisect)
 * [`jj bisect run`↴](#jj-bisect-run)
 * [`jj bookmark`↴](#jj-bookmark)
+* [`jj bookmark advance`↴](#jj-bookmark-advance)
 * [`jj bookmark create`↴](#jj-bookmark-create)
 * [`jj bookmark delete`↴](#jj-bookmark-delete)
 * [`jj bookmark forget`↴](#jj-bookmark-forget)
@@ -345,6 +346,7 @@ See [`jj help -k bookmarks`] for more information.
 
 ###### **Subcommands:**
 
+* `advance` — Advance the closest bookmarks to a target revision
 * `create` — Create a new bookmark
 * `delete` — Delete an existing bookmark and propagate the deletion to remotes on the next push
 * `forget` — Forget a bookmark without marking it as a deletion to be pushed
@@ -354,6 +356,39 @@ See [`jj help -k bookmarks`] for more information.
 * `set` — Create a new bookmark, or update an existing one by name
 * `track` — Start tracking given remote bookmarks
 * `untrack` — Stop tracking given remote bookmarks
+
+
+
+## `jj bookmark advance`
+
+Advance the closest bookmarks to a target revision.
+
+The target `--to` defaults to `revsets.advance-default-to` (which defaults to `@`).
+
+The bookmarks advanced is determined by revset alias `closest_bookmarks(to)` where `to` is the target revision.
+
+Positional bookmark name arguments can target specific bookmarks to advance to the target.
+
+Example:
+
+`jj bookmark advance --to x` - Does the equivalent of `jj bookmark move --from 'closest_bookmarks(x)' --to x`.
+
+**Usage:** `jj bookmark advance [OPTIONS] [NAMES]...`
+
+**Command Alias:** `a`
+
+###### **Arguments:**
+
+* `<NAMES>` — Move bookmarks matching the given name patterns
+
+   By default, the specified pattern matches bookmark names with glob syntax. You can also use other [string pattern syntax].
+
+   [string pattern syntax]: https://docs.jj-vcs.dev/latest/revsets/#string-patterns
+
+###### **Options:**
+
+* `-t`, `--to <REVSET>` — Move bookmarks to this revision, defaults to `revsets.advance-default-to`
+* `-B`, `--allow-backwards` — Allow moving bookmarks backwards or sideways
 
 
 

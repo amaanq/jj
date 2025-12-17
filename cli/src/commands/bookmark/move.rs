@@ -57,21 +57,21 @@ pub struct BookmarkMoveArgs {
     ///     https://docs.jj-vcs.dev/latest/revsets/#string-patterns
     #[arg(group = "source")]
     #[arg(add = ArgValueCandidates::new(complete::local_bookmarks))]
-    names: Option<Vec<String>>,
+    pub names: Option<Vec<String>>,
 
     /// Move bookmarks from the given revisions
     #[arg(long, short, group = "source", value_name = "REVSETS")]
     #[arg(add = ArgValueCompleter::new(complete::revset_expression_all))]
-    from: Vec<RevisionArg>,
+    pub from: Vec<RevisionArg>,
 
     /// Move bookmarks to this revision
     #[arg(long, short, default_value = "@", value_name = "REVSET")]
     #[arg(add = ArgValueCompleter::new(complete::revset_expression_all))]
-    to: RevisionArg,
+    pub to: RevisionArg,
 
     /// Allow moving bookmarks backwards or sideways
     #[arg(long, short = 'B')]
-    allow_backwards: bool,
+    pub allow_backwards: bool,
 }
 
 pub fn cmd_bookmark_move(

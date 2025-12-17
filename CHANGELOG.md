@@ -30,6 +30,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as `jj simplify-parents` on the rebased commits.
   [#7711](https://github.com/jj-vcs/jj/issues/7711)
 
+* New command `jj bookmark advance` automatically moves bookmarks forward to a
+  target revision (defaults to `@`). The bookmarks moved are those closest to
+  the target, determined by the `closest_bookmarks()` revset. The command is
+  heavily inspired by the longstanding community alias `jj tug`.
+
 ### Fixed bugs
 
 ## [0.38.0] - 2026-02-04

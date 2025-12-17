@@ -12,6 +12,7 @@ log = "present(@) | ancestors(immutable_heads().., 2) | trunk()"
 # This also helps stabilize output order.
 log-graph-prioritize = "present(@)"
 sign = "reachable(@, mutable())"
+advance-default-to = "@"
 
 [revset-aliases]
 # trunk() can be overridden as '<bookmark>@<remote>'.
@@ -36,3 +37,5 @@ latest(
 
 'visible()' = '::visible_heads()'
 'hidden()' = '~visible()'
+
+'closest_bookmarks(to)' = 'heads(::to & bookmarks())'

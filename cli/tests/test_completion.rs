@@ -872,16 +872,16 @@ fn test_aliases_are_completed(shell: Shell) {
             ");
         }
         Shell::Zsh => {
-            insta::assert_snapshot!(output, @"
+            insta::assert_snapshot!(output, @r"
+            advance:Advance the closest bookmarks to a target revision
             create:Create a new bookmark
-            delete:Delete an existing bookmark and propagate the deletion to remotes on the next push
             [EOF]
             ");
         }
         Shell::Fish => {
-            insta::assert_snapshot!(output, @"
+            insta::assert_snapshot!(output, @r"
+            advance	Advance the closest bookmarks to a target revision
             create	Create a new bookmark
-            delete	Delete an existing bookmark and propagate the deletion to remotes on the next push
             [EOF]
             ");
         }
