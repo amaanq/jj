@@ -79,6 +79,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 * New `remote_tags()` revset function to query remote tags.
 
+* `jj gerrit upload` now supports a variety of new flags documented in
+  [gerrit's documentation](https://gerrit-review.googlesource.com/Documentation/user-upload.html).
+  This includes, for example, `--reviewer=foo@example.com` and
+  `--label=Auto-Submit`.
+
+
 ### Fixed bugs
 
 * `jj git init --colocate` now refuses to run inside a Git worktree, providing
