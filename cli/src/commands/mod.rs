@@ -34,6 +34,7 @@ mod gerrit;
 #[cfg(feature = "git")]
 mod git;
 mod help;
+mod histedit;
 mod interdiff;
 mod log;
 mod metaedit;
@@ -122,6 +123,8 @@ enum Command {
     #[command(subcommand)]
     Git(git::GitCommand),
     Help(help::HelpArgs),
+    #[command(hide = true)]
+    Histedit(histedit::HisteditArgs),
     Interdiff(interdiff::InterdiffArgs),
     Log(log::LogArgs),
     Metaedit(metaedit::MetaeditArgs),
@@ -190,6 +193,7 @@ pub fn run_command(ui: &mut Ui, command_helper: &CommandHelper) -> Result<(), Co
         #[cfg(feature = "git")]
         Command::Git(args) => git::cmd_git(ui, command_helper, args),
         Command::Help(args) => help::cmd_help(ui, command_helper, args),
+        Command::Histedit(args) => histedit::cmd_histedit(ui, command_helper, args),
         Command::Interdiff(args) => interdiff::cmd_interdiff(ui, command_helper, args),
         Command::Log(args) => log::cmd_log(ui, command_helper, args),
         Command::Metaedit(args) => metaedit::cmd_metaedit(ui, command_helper, args),
