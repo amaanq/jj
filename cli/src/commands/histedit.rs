@@ -143,6 +143,11 @@ pub(crate) fn cmd_histedit(
     Ok(())
 }
 
+enum Action {
+    Abandon,
+    Pick,
+}
+
 struct State {
     commits: HashMap<CommitId, Commit>,
     /// Commits in the original revset order
@@ -151,6 +156,7 @@ struct State {
     current_order: Vec<CommitId>,
     // The current selection as an index into `current_order`
     current_selection: usize,
+    actions: HashMap<CommitId, Action>,
     parents: HashMap<CommitId, Vec<CommitId>>,
     children: HashMap<CommitId, Vec<CommitId>>,
     external_parents: HashSet<CommitId>,
@@ -169,6 +175,10 @@ impl State {
                 let id = commit.id().clone();
                 (id, commit)
             })
+            .collect();
+        let actions = commits
+            .keys()
+            .map(|id| (id.clone(), Action::Pick))
             .collect();
         let mut parents: HashMap<CommitId, Vec<CommitId>> = HashMap::new();
         let mut children: HashMap<CommitId, Vec<CommitId>> = HashMap::new();
@@ -211,6 +221,7 @@ impl State {
             original_order,
             current_order,
             current_selection: 0,
+            actions,
             parents,
             children,
             external_parents,
@@ -259,7 +270,14 @@ fn run_tui<B: ratatui::backend::Backend>(
     template: &crate::templater::TemplateRenderer<Commit>,
     mut state: State,
 ) -> Result<Option<State>, CommandError> {
-    let help_items = [("↑", "up"), ("↓", "down"), ("c", "confirm"), ("q", "quit")];
+    let help_items = [
+        ("↑", "up"),
+        ("↓", "down"),
+        ("a", "abandon"),
+        ("p", "pick"),
+        ("c", "confirm"),
+        ("q", "quit"),
+    ];
     let mut help_spans = Vec::new();
     for (i, (key, desc)) in help_items.iter().enumerate() {
         if i > 0 {
@@ -291,12 +309,14 @@ fn run_tui<B: ratatui::backend::Backend>(
                     let row_layout = Layout::horizontal([
                         Constraint::Min(2),
                         Constraint::Min(10),
+                        Constraint::Min(10),
                         Constraint::Fill(100),
                     ])
                     .split(row_area);
                     let selection_area = row_layout[0];
                     let graph_area = row_layout[1];
-                    let text_area = row_layout[2];
+                    let action_area = row_layout[2];
+                    let text_area = row_layout[3];
 
                     if index == state.current_selection {
                         frame.render_widget(Text::from("▶"), selection_area);
@@ -304,13 +324,18 @@ fn run_tui<B: ratatui::backend::Backend>(
 
                     let commit = state.commits.get(id).unwrap();
                     let new_parents = state.parents.get(id).unwrap();
+                    let action = state.actions.get(id).unwrap();
 
                     let edges = new_parents
                         .iter()
                         .map(|parent_id| Ancestor::Parent(parent_id))
                         .collect_vec();
+                    let glyph = match action {
+                        Action::Abandon => "×",
+                        Action::Pick => "○",
+                    };
                     let graph_lines =
-                        row_renderer.next_row(id, edges, "○".to_string(), "".to_string());
+                        row_renderer.next_row(id, edges, glyph.to_string(), "".to_string());
                     let graph_text = Text::from(graph_lines);
                     row_area = row_area
                         .offset(Offset {
@@ -319,6 +344,12 @@ fn run_tui<B: ratatui::backend::Backend>(
                         })
                         .intersection(main_area);
                     frame.render_widget(graph_text, graph_area);
+
+                    let action_text = match action {
+                        Action::Abandon => "abandon",
+                        Action::Pick => "pick",
+                    };
+                    frame.render_widget(Text::from(action_text), action_area);
 
                     let mut text_lines = vec![];
                     let mut formatter = ui.new_formatter(&mut text_lines);
@@ -356,6 +387,14 @@ fn run_tui<B: ratatui::backend::Backend>(
                         state.current_selection -= 1;
                     }
                 }
+                (KeyCode::Char('a'), KeyModifiers::NONE) => {
+                    let id = state.current_order[state.current_selection].clone();
+                    state.actions.insert(id, Action::Abandon);
+                }
+                (KeyCode::Char('p'), KeyModifiers::NONE) => {
+                    let id = state.current_order[state.current_selection].clone();
+                    state.actions.insert(id, Action::Pick);
+                }
                 _ => {
                     continue;
                 }
@@ -381,8 +420,15 @@ fn apply_changes(
             if let Some(new_parents) = state.parents.get(rewriter.old_commit().id()) {
                 rewriter.set_new_rewritten_parents(new_parents);
             }
-            if rewriter.parents_changed() {
-                rewriter.rebase().await?.write()?;
+            if let Some(action) = state.actions.get(rewriter.old_commit().id()) {
+                match action {
+                    Action::Abandon => rewriter.abandon(),
+                    Action::Pick => {
+                        if rewriter.parents_changed() {
+                            rewriter.rebase().await?.write()?;
+                        }
+                    }
+                }
             }
             Ok(())
         })?;
