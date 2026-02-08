@@ -149,6 +149,8 @@ struct State {
     original_order: Vec<CommitId>,
     /// The current order of commits in the UI
     current_order: Vec<CommitId>,
+    // The current selection as an index into `current_order`
+    current_selection: usize,
     parents: HashMap<CommitId, Vec<CommitId>>,
     children: HashMap<CommitId, Vec<CommitId>>,
     external_parents: HashSet<CommitId>,
@@ -208,6 +210,7 @@ impl State {
             commits,
             original_order,
             current_order,
+            current_selection: 0,
             parents,
             children,
             external_parents,
@@ -256,7 +259,7 @@ fn run_tui<B: ratatui::backend::Backend>(
     template: &crate::templater::TemplateRenderer<Commit>,
     mut state: State,
 ) -> Result<Option<State>, CommandError> {
-    let help_items = [("c", "confirm"), ("q", "quit")];
+    let help_items = [("↑", "up"), ("↓", "down"), ("c", "confirm"), ("q", "quit")];
     let mut help_spans = Vec::new();
     for (i, (key, desc)) in help_items.iter().enumerate() {
         if i > 0 {
@@ -282,14 +285,22 @@ fn run_tui<B: ratatui::backend::Backend>(
                     .with_min_row_height(2)
                     .build_box_drawing();
                 let mut row_area = main_area;
-                for id in &state.current_order {
+                for (index, id) in state.current_order.iter().enumerate() {
                     // TODO: Make the graph column width depend on what's needed to render the
                     // graph.
-                    let row_layout =
-                        Layout::horizontal([Constraint::Min(10), Constraint::Fill(100)])
-                            .split(row_area);
-                    let graph_area = row_layout[0];
-                    let text_area = row_layout[1];
+                    let row_layout = Layout::horizontal([
+                        Constraint::Min(2),
+                        Constraint::Min(10),
+                        Constraint::Fill(100),
+                    ])
+                    .split(row_area);
+                    let selection_area = row_layout[0];
+                    let graph_area = row_layout[1];
+                    let text_area = row_layout[2];
+
+                    if index == state.current_selection {
+                        frame.render_widget(Text::from("▶"), selection_area);
+                    }
 
                     let commit = state.commits.get(id).unwrap();
                     let new_parents = state.parents.get(id).unwrap();
@@ -334,6 +345,16 @@ fn run_tui<B: ratatui::backend::Backend>(
                 }
                 (KeyCode::Char('c'), KeyModifiers::NONE) => {
                     return Ok(Some(state));
+                }
+                (KeyCode::Down, KeyModifiers::NONE) => {
+                    if state.current_selection + 1 < state.commits.len() {
+                        state.current_selection += 1;
+                    }
+                }
+                (KeyCode::Up, KeyModifiers::NONE) => {
+                    if state.current_selection > 0 {
+                        state.current_selection -= 1;
+                    }
                 }
                 _ => {
                     continue;
