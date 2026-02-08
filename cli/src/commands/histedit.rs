@@ -32,6 +32,7 @@ use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::dag_walk;
 use jj_lib::repo::Repo;
+use jj_lib::revset::RevsetExpression;
 use jj_lib::revset::RevsetIteratorExt as _;
 use ratatui::Terminal;
 use ratatui::layout::Constraint;
@@ -51,6 +52,7 @@ use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
 use crate::cli_util::RevisionArg;
+use crate::cli_util::WorkspaceCommandHelper;
 use crate::cli_util::short_commit_hash;
 use crate::command_error::CommandError;
 use crate::command_error::internal_error;
@@ -77,7 +79,7 @@ pub(crate) fn cmd_histedit(
     args: &HisteditArgs,
 ) -> Result<(), CommandError> {
     let workspace_command = command.workspace_helper(ui)?;
-    let repo = workspace_command.repo();
+    let repo = workspace_command.repo().clone();
     let target_expression = if args.revisions.is_empty() {
         let revs = workspace_command
             .settings()
@@ -134,7 +136,11 @@ pub(crate) fn cmd_histedit(
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
 
-    result
+    if let Some(new_state) = result? {
+        apply_changes(ui, workspace_command, new_state)?;
+    }
+
+    Ok(())
 }
 
 struct State {
@@ -249,8 +255,8 @@ fn run_tui<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     template: &crate::templater::TemplateRenderer<Commit>,
     mut state: State,
-) -> Result<(), CommandError> {
-    let help_items = [("q", "quit")];
+) -> Result<Option<State>, CommandError> {
+    let help_items = [("c", "confirm"), ("q", "quit")];
     let mut help_spans = Vec::new();
     for (i, (key, desc)) in help_items.iter().enumerate() {
         if i > 0 {
@@ -324,7 +330,10 @@ fn run_tui<B: ratatui::backend::Backend>(
         {
             match (code, modifiers) {
                 (KeyCode::Char('q'), KeyModifiers::NONE) => {
-                    return Ok(());
+                    return Ok(None);
+                }
+                (KeyCode::Char('c'), KeyModifiers::NONE) => {
+                    return Ok(Some(state));
                 }
                 _ => {
                     continue;
@@ -333,4 +342,29 @@ fn run_tui<B: ratatui::backend::Backend>(
             state.update_commit_order();
         }
     }
+}
+
+fn apply_changes(
+    ui: &mut Ui,
+    mut workspace_command: WorkspaceCommandHelper,
+    state: State,
+) -> Result<(), CommandError> {
+    let roots = RevsetExpression::commits(state.original_order)
+        .roots()
+        .evaluate(workspace_command.repo().as_ref())?
+        .iter()
+        .try_collect()?;
+    let mut tx = workspace_command.start_transaction();
+    tx.repo_mut()
+        .transform_descendants(roots, async |mut rewriter| {
+            if let Some(new_parents) = state.parents.get(rewriter.old_commit().id()) {
+                rewriter.set_new_rewritten_parents(new_parents);
+            }
+            if rewriter.parents_changed() {
+                rewriter.rebase().await?.write()?;
+            }
+            Ok(())
+        })?;
+    tx.finish(ui, "histedit")?;
+    Ok(())
 }
