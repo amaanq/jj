@@ -262,6 +262,59 @@ impl State {
         .unwrap();
         self.current_order = commit_ids.into_iter().cloned().collect();
     }
+
+    fn swap_commits(&mut self, a_idx: usize, b_idx: usize) {
+        if a_idx == b_idx {
+            return;
+        }
+
+        if self.current_selection == a_idx {
+            self.current_selection = b_idx;
+        } else if self.current_selection == b_idx {
+            self.current_selection = a_idx;
+        }
+
+        self.current_order.swap(a_idx, b_idx);
+        // Backwards because we just swapped them. It doesn't matter which is which
+        // anyway.
+        let a_id = &self.current_order[b_idx];
+        let b_id = &self.current_order[a_idx];
+
+        fn replace_in_vec(vec: &mut Vec<CommitId>, a: &CommitId, b: &CommitId) {
+            for id in vec.iter_mut() {
+                if id == a {
+                    *id = b.clone();
+                } else if id == b {
+                    *id = a.clone();
+                }
+            }
+        }
+
+        // Temporarily remove all the parents and children
+        let mut a_parents = self.parents.remove(a_id).unwrap();
+        let mut b_parents = self.parents.remove(b_id).unwrap();
+        let mut a_children = self.children.remove(a_id).unwrap();
+        let mut b_children = self.children.remove(b_id).unwrap();
+
+        // Update references to the swapped commits from their parents and children
+        for (_, parents) in &mut self.parents {
+            replace_in_vec(parents, a_id, b_id);
+        }
+        for (_, children) in &mut self.children {
+            replace_in_vec(children, a_id, b_id);
+        }
+
+        // Update the parents and children of A and B themselves
+        replace_in_vec(&mut a_parents, a_id, b_id);
+        replace_in_vec(&mut b_parents, b_id, a_id);
+        replace_in_vec(&mut a_children, a_id, b_id);
+        replace_in_vec(&mut b_children, b_id, a_id);
+
+        self.parents.insert(a_id.clone(), b_parents);
+        self.parents.insert(b_id.clone(), a_parents);
+        self.children.insert(a_id.clone(), b_children);
+        self.children.insert(b_id.clone(), a_children);
+    }
 }
 
 fn run_tui<B: ratatui::backend::Backend>(
@@ -273,6 +326,8 @@ fn run_tui<B: ratatui::backend::Backend>(
     let help_items = [
         ("↑", "up"),
         ("↓", "down"),
+        ("⇧+↑", "swap up"),
+        ("⇧+↓", "swap down"),
         ("a", "abandon"),
         ("p", "pick"),
         ("c", "confirm"),
@@ -394,6 +449,17 @@ fn run_tui<B: ratatui::backend::Backend>(
                 (KeyCode::Char('p'), KeyModifiers::NONE) => {
                     let id = state.current_order[state.current_selection].clone();
                     state.actions.insert(id, Action::Pick);
+                }
+                // TODO: Allow swapping up/down only within linear parts of the graph.
+                (KeyCode::Down, KeyModifiers::SHIFT) => {
+                    if state.current_selection + 1 < state.commits.len() {
+                        state.swap_commits(state.current_selection, state.current_selection + 1);
+                    }
+                }
+                (KeyCode::Up, KeyModifiers::SHIFT) => {
+                    if state.current_selection > 0 {
+                        state.swap_commits(state.current_selection, state.current_selection - 1);
+                    }
                 }
                 _ => {
                     continue;
