@@ -1365,10 +1365,10 @@ fn test_fix_adding_merge_commit() {
     work_dir.write_file("file_d", "change d");
 
     let output = work_dir.run_jj(["fix", "-s", "@"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Fixed 1 commits of 1 checked.
-    Working copy  (@) now at: mzvwutvl 9f580aac (no description set)
+    Working copy  (@) now at: mzvwutvl 5ffcc7f5 Merge b into a
     Parent commit (@-)      : qpvuntsm 93f04460 a | (no description set)
     Parent commit (@-)      : kkmpptxz ad4fc36c b | (no description set)
     Added 0 files, modified 4 files, removed 0 files
@@ -1404,10 +1404,10 @@ fn test_fix_both_sides_of_conflict() {
     // The conflicts are not different from the merged parent, so they would not be
     // fixed if we didn't fix the parents also.
     let output = work_dir.run_jj(["fix", "-s", "a", "-s", "b"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Fixed 3 commits of 3 checked.
-    Working copy  (@) now at: mzvwutvl 1bfa5dc3 (conflict) (empty) (no description set)
+    Working copy  (@) now at: mzvwutvl 15529fcd (conflict) (empty) Merge b into a
     Parent commit (@-)      : qpvuntsm 0eae0dae a | (no description set)
     Parent commit (@-)      : kkmpptxz eb61ba8d b | (no description set)
     Added 0 files, modified 1 files, removed 0 files
@@ -1460,10 +1460,10 @@ fn test_fix_resolve_conflict() {
     // The conflicts are not different from the merged parent, so they would not be
     // fixed if we didn't fix the parents also.
     let output = work_dir.run_jj(["fix", "-s", "a", "-s", "b"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Fixed 3 commits of 3 checked.
-    Working copy  (@) now at: mzvwutvl c4e4665e (empty) (no description set)
+    Working copy  (@) now at: mzvwutvl 357d6d71 (empty) Merge b into a
     Parent commit (@-)      : qpvuntsm 7a0dbb95 a | (no description set)
     Parent commit (@-)      : kkmpptxz 5d9510ab b | (no description set)
     Added 0 files, modified 1 files, removed 0 files

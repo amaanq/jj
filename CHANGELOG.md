@@ -51,6 +51,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 * `jj new` now evaluates the `default_commit_description` template to
   populate the initial commit description when no `-m` message is provided.
 
+* The default `default_commit_description` template now auto-generates merge
+  commit messages like "Merge feature into main" when all parents have
+  bookmarks.
+
 ### Fixed bugs
 
 ## [0.38.0] - 2026-02-04

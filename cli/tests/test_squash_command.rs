@@ -109,9 +109,9 @@ fn test_squash() {
     work_dir
         .run_jj(["bookmark", "create", "-r@", "e"])
         .success();
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @    e05d4caaf6ce e (empty)
-    ├─╮
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @    b8736f25edff e Merge d into c
+    ├─╮   (empty)
     │ ○  9bb7863cfc78 d
     ○ │  22be6c4e01da c
     ├─╯
@@ -133,15 +133,15 @@ fn test_squash() {
     work_dir.run_jj(["new", "e"]).success();
     work_dir.write_file("file1", "e\n");
     let output = work_dir.run_jj(["squash"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
-    Working copy  (@) now at: xlzxqlsl 91a81249 (empty) (no description set)
-    Parent commit (@-)      : nmzmmopx 9155baf5 e | (no description set)
+    Working copy  (@) now at: xlzxqlsl c6cd4fb2 (empty) (no description set)
+    Parent commit (@-)      : nmzmmopx bd82e00d e | Merge d into c
     [EOF]
     ");
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  91a81249954f (empty)
-    ○    9155baf5ced1 e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  c6cd4fb2598e (empty)
+    ○    bd82e00d9861 e Merge d into c
     ├─╮
     │ ○  9bb7863cfc78 d
     ○ │  22be6c4e01da c
@@ -883,9 +883,9 @@ fn test_squash_from_multiple() {
         .success();
     work_dir.write_file("file", "f\n");
     // Test the setup
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  65e53f39b4d6 f
-    ○      7dc592781647 e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  4c6973e8fc0a f
+    ○      95b6c8e212cd e Merge c, b into d
     ├─┬─╮
     │ │ ○  fed4d1a2e491 b
     │ ○ │  d7e94ec7e73e c
@@ -900,11 +900,11 @@ fn test_squash_from_multiple() {
 
     // Squash a few commits sideways
     let output = work_dir.run_jj(["squash", "--from=b", "--from=c", "--into=d"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Rebased 2 descendant commits
-    Working copy  (@) now at: kpqxywon f584da5f f | (no description set)
-    Parent commit (@-)      : yostqsxw 6fbe5593 e | (no description set)
+    Working copy  (@) now at: kpqxywon 1dc6a0e9 f | (no description set)
+    Parent commit (@-)      : yostqsxw a9edc15c e | Merge c, b into d
     New conflicts appeared in 1 commits:
       yqosqzyt 3592e886 d | (conflict) (no description set)
     Hint: To resolve the conflicts, start by creating a commit on top of
@@ -915,9 +915,9 @@ fn test_squash_from_multiple() {
     Then run `jj squash` to move the resolution into the conflicted commit.
     [EOF]
     ");
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  f584da5f6b0d f
-    ○    6fbe5593f24a e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  1dc6a0e9e5e2 f
+    ○    a9edc15c429b e Merge c, b into d
     ├─╮
     × │  3592e886b254 d
     ├─╯
@@ -946,16 +946,16 @@ fn test_squash_from_multiple() {
     // Squash a few commits up an down
     work_dir.run_jj(["op", "restore", &setup_opid]).success();
     let output = work_dir.run_jj(["squash", "--from=b|c|f", "--into=e"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Rebased 1 descendant commits
-    Working copy  (@) now at: xznxytkn ec32238b (empty) (no description set)
-    Parent commit (@-)      : yostqsxw 5298eef6 e f | (no description set)
+    Working copy  (@) now at: xznxytkn 4f063d05 (empty) (no description set)
+    Parent commit (@-)      : yostqsxw 63dbc26c e f | Merge c, b into d
     [EOF]
     ");
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  ec32238b2be5 (empty)
-    ○    5298eef6bca5 e f
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  4f063d05620c (empty)
+    ○    63dbc26c8229 e f Merge c, b into d
     ├─╮
     ○ │  8acbb71558d5 d
     ├─╯
@@ -1029,9 +1029,9 @@ fn test_squash_from_multiple_partial() {
     work_dir.write_file("file1", "f\n");
     work_dir.write_file("file2", "f\n");
     // Test the setup
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  4558bd852475 f
-    ○      e2db96b2e57a e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  8a9ba4fc638e f
+    ○      11edf09d6592 e Merge c, b into d
     ├─┬─╮
     │ │ ○  f2c9709f39e9 b
     │ ○ │  aa908686a197 c
@@ -1046,11 +1046,11 @@ fn test_squash_from_multiple_partial() {
 
     // Partially squash a few commits sideways
     let output = work_dir.run_jj(["squash", "--from=b|c", "--into=d", "file1"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Rebased 2 descendant commits
-    Working copy  (@) now at: kpqxywon 9113246b f | (no description set)
-    Parent commit (@-)      : yostqsxw f069c595 e | (no description set)
+    Working copy  (@) now at: kpqxywon 30b6ce5e f | (no description set)
+    Parent commit (@-)      : yostqsxw 7d19025a e | Merge c, b into d
     New conflicts appeared in 1 commits:
       yqosqzyt 35455ce2 d | (conflict) (no description set)
     Hint: To resolve the conflicts, start by creating a commit on top of
@@ -1061,9 +1061,9 @@ fn test_squash_from_multiple_partial() {
     Then run `jj squash` to move the resolution into the conflicted commit.
     [EOF]
     ");
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  9113246bdbc0 f
-    ○      f069c5953603 e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  30b6ce5ecda4 f
+    ○      7d19025ac711 e Merge c, b into d
     ├─┬─╮
     │ │ ○  e9db15b956c4 b
     │ ○ │  83cbe51db94d c
@@ -1113,16 +1113,16 @@ fn test_squash_from_multiple_partial() {
     // Partially squash a few commits up an down
     work_dir.run_jj(["op", "restore", &setup_opid]).success();
     let output = work_dir.run_jj(["squash", "--from=b|c|f", "--into=e", "file1"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
     Rebased 1 descendant commits
-    Working copy  (@) now at: kpqxywon b5a40c15 f | (no description set)
-    Parent commit (@-)      : yostqsxw 5dea187c e | (no description set)
+    Working copy  (@) now at: kpqxywon 540d9043 f | (no description set)
+    Parent commit (@-)      : yostqsxw a1406bfd e | Merge c, b into d
     [EOF]
     ");
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  b5a40c154611 f
-    ○      5dea187c414d e
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  540d9043cc91 f
+    ○      a1406bfd5ba0 e Merge c, b into d
     ├─┬─╮
     │ │ ○  8b9afc05ca07 b
     │ ○ │  5630471a8fd5 c

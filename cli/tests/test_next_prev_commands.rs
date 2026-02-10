@@ -467,8 +467,8 @@ fn test_prev_on_merge_commit() {
     work_dir.run_jj(["new", "left", "right"]).success();
 
     // Check that the graph looks the way we expect.
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @    royxmykxtrkr
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @    royxmykxtrkr Merge right into left
     ├─╮
     │ ○  zsuskulnrvyr right second
     ○ │  qpvuntsmwlqt left first

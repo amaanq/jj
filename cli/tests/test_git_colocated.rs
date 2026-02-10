@@ -1202,8 +1202,8 @@ fn test_git_colocated_update_index_merge_conflict() {
     // Create merge conflict
     work_dir.run_jj(["new", "left", "right"]).success();
 
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @    3b7a70e06827787d9b89cb2943eb56c1fc01b199
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @    649d60822be4b2a49e973a127270f8b735b7a4f0 Merge right into left
     ├─╮
     │ ○  620e15db9fcd05fff912c52d2cafd36c9e01523c right
     ○ │  d0f55ffafa1e0e72980202c349af23d093f825be left
@@ -1226,9 +1226,9 @@ fn test_git_colocated_update_index_merge_conflict() {
 
     work_dir.run_jj(["new"]).success();
 
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  0e393df829aba628f38c7cea10ed084c01c4f8dc
-    ×    3b7a70e06827787d9b89cb2943eb56c1fc01b199
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  5eabbb3eabd950d260dd7607cf96d1a889265132
+    ×    649d60822be4b2a49e973a127270f8b735b7a4f0 Merge right into left
     ├─╮
     │ ○  620e15db9fcd05fff912c52d2cafd36c9e01523c right
     ○ │  d0f55ffafa1e0e72980202c349af23d093f825be left
@@ -1405,8 +1405,8 @@ fn test_git_colocated_update_index_3_sided_conflict() {
         .run_jj(["new", "side-1", "side-2", "side-3"])
         .success();
 
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @      2d396332267d4158d0554a636343498ad74b1555
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @      5554a24abf02185e0975c3d4e7bd002314b2bdfd Merge side-2, side-3 into side-1
     ├─┬─╮
     │ │ ○  5008c8807feaa955d02e96cb1b0dcf51536fefb8 side-3
     │ ○ │  da6e0a03f8b72f6868a9ea33836123fe965c0cb4 side-2
@@ -1431,9 +1431,9 @@ fn test_git_colocated_update_index_3_sided_conflict() {
 
     work_dir.run_jj(["new"]).success();
 
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @  05c0d46f4f8e6fee4b1ee268242bc11a71745739
-    ×      2d396332267d4158d0554a636343498ad74b1555
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @  9742bd955458786a9b0f25b6fca23cb11aae21c8
+    ×      5554a24abf02185e0975c3d4e7bd002314b2bdfd Merge side-2, side-3 into side-1
     ├─┬─╮
     │ │ ○  5008c8807feaa955d02e96cb1b0dcf51536fefb8 side-3
     │ ○ │  da6e0a03f8b72f6868a9ea33836123fe965c0cb4 side-2

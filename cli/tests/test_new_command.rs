@@ -190,8 +190,8 @@ fn test_new_merge_parents_order() {
             "subject(4)",
         ])
         .success();
-    insta::assert_snapshot!(get_log_output(&work_dir), @r"
-    @          2034dc93c6ddad404d1aa677ab99b0621d8e109d
+    insta::assert_snapshot!(get_log_output(&work_dir), @"
+    @          4bd830f1f750710ea4e8b625be7c43a45e4adfae Merge 3, 1, 5, 4 into 2
     ├─┬─┬─┬─╮
     │ │ │ │ ○  de5bab19f679c52a021c343b8942ca875ec6aae7 4
     │ │ │ ○ │  de3c6b2c8e065351203063817ef0794df1adb2f9 5
@@ -219,9 +219,9 @@ fn test_new_merge_conflicts() {
 
     // merge line by line by default
     let output = work_dir.run_jj(["new", "2|3"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
-    Working copy  (@) now at: vruxwmqv 4665f78e (conflict) (empty) (no description set)
+    Working copy  (@) now at: vruxwmqv 420f7ef6 (conflict) (empty) Merge 2 into 3
     Parent commit (@-)      : royxmykx 1b282e07 3 | 3
     Parent commit (@-)      : zsuskuln 7ac709e5 2 | 2
     Added 0 files, modified 1 files, removed 0 files
@@ -247,9 +247,9 @@ fn test_new_merge_conflicts() {
 
     // merge word by word
     let output = work_dir.run_jj(["new", "2|3", "--config=merge.hunk-level=word"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
-    Working copy  (@) now at: znkkpsqq 892ac90f (empty) (no description set)
+    Working copy  (@) now at: znkkpsqq c67d397b (empty) Merge 2 into 3
     Parent commit (@-)      : royxmykx 1b282e07 3 | 3
     Parent commit (@-)      : zsuskuln 7ac709e5 2 | 2
     Added 1 files, modified 0 files, removed 0 files
@@ -274,9 +274,9 @@ fn test_new_merge_same_change() {
 
     // same-change conflict is resolved by default
     let output = work_dir.run_jj(["new", "2|3"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
-    Working copy  (@) now at: vruxwmqv 7bebf0fe (empty) (no description set)
+    Working copy  (@) now at: vruxwmqv 8c00e73d (empty) Merge 2 into 3
     Parent commit (@-)      : royxmykx 1b9fe696 3 | 3
     Parent commit (@-)      : zsuskuln 829e1e90 2 | 2
     [EOF]
@@ -291,9 +291,9 @@ fn test_new_merge_same_change() {
 
     // keep same-change conflict
     let output = work_dir.run_jj(["new", "2|3", "--config=merge.same-change=keep"]);
-    insta::assert_snapshot!(output, @r"
+    insta::assert_snapshot!(output, @"
     ------- stderr -------
-    Working copy  (@) now at: znkkpsqq 7be86433 (conflict) (empty) (no description set)
+    Working copy  (@) now at: znkkpsqq 3b0011de (conflict) (empty) Merge 2 into 3
     Parent commit (@-)      : royxmykx 1b9fe696 3 | 3
     Parent commit (@-)      : zsuskuln 829e1e90 2 | 2
     Added 1 files, modified 0 files, removed 0 files
@@ -345,6 +345,71 @@ fn test_new_default_commit_description() {
     Parent commit (@-)      : kkmpptxz ccc7aea5 (empty) explicit message
     [EOF]
     ");
+}
+
+#[test]
+fn test_new_default_commit_description_merge() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    // Create two branches to merge
+    work_dir.run_jj(["describe", "-m", "add file1"]).success();
+    work_dir.write_file("file1", "a");
+    work_dir
+        .run_jj(["bookmark", "create", "-r@", "main"])
+        .success();
+    work_dir
+        .run_jj(["new", "root()", "-m", "add file2"])
+        .success();
+    work_dir.write_file("file2", "b");
+    work_dir
+        .run_jj(["bookmark", "create", "-r@", "feature"])
+        .success();
+
+    // Create a merge commit with bookmarked parents - should get auto-populated
+    // description from the default template
+    work_dir.run_jj(["new", "main", "feature"]).success();
+    let output = work_dir.run_jj(["log", "-r@", "-T", "description"]);
+    insta::assert_snapshot!(output, @r#"
+    @  Merge feature into main
+    │
+    ~
+    [EOF]
+    "#);
+
+    // With -m flag, the explicit message should be used instead
+    work_dir
+        .run_jj(["new", "main", "feature", "-m", "custom merge"])
+        .success();
+    let output = work_dir.run_jj(["log", "-r@", "-T", "description"]);
+    insta::assert_snapshot!(output, @r#"
+    @  custom merge
+    │
+    ~
+    [EOF]
+    "#);
+
+    // Non-merge commit should have no description
+    work_dir.run_jj(["new", "main"]).success();
+    let output = work_dir.run_jj(["log", "-r@", "-T", "description"]);
+    insta::assert_snapshot!(output, @r#"
+    @
+    │
+    ~
+    [EOF]
+    "#);
+
+    // Merge where a parent has no bookmark should have no description
+    // (default template only works when all parents have bookmarks)
+    work_dir.run_jj(["new", "main", "@"]).success();
+    let output = work_dir.run_jj(["log", "-r@", "-T", "description"]);
+    insta::assert_snapshot!(output, @r#"
+    @
+    │
+    ~
+    [EOF]
+    "#);
 }
 
 #[test]

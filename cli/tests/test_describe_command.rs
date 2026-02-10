@@ -680,14 +680,16 @@ fn test_describe_default_description() {
     JJ: Lines starting with "JJ:" (like this one) will be removed.
     "#);
 
-    // Default description shouldn't be used if --no-edit
+    // `jj new` now evaluates default_commit_description, so the commit gets
+    // the custom description (which starts with blank lines, so the summary
+    // doesn't show it). `jj describe --no-edit` shouldn't change it.
     work_dir.run_jj(["new", "root()"]).success();
     let output = work_dir.run_jj(["describe", "--no-edit", "--reset-author"]);
     insta::assert_snapshot!(output, @r"
     ------- stderr -------
     Warning: `jj describe --no-edit` is deprecated; use `jj metaedit` instead
     Warning: `jj describe --reset-author` is deprecated; use `jj metaedit --update-author` instead
-    Working copy  (@) now at: kkmpptxz 7118bcb8 (empty) (no description set)
+    Working copy  (@) now at: kkmpptxz ad9248b5 (empty)
     Parent commit (@-)      : zzzzzzzz 00000000 (empty) (no description set)
     [EOF]
     ");

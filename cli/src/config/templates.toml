@@ -292,7 +292,14 @@ label(if(op.current_operation(), "current_operation"),
 )
 '''
 
-default_commit_description = '""'
+default_commit_description = '''
+if(parents.len() > 1 && parents.all(|p| p.bookmarks()),
+  "Merge " ++ parents.skip(1).map(|p|
+    p.bookmarks().first().name()
+  ).join(", ") ++ " into " ++ parents.first().bookmarks().first().name() ++ "\n",
+  "",
+)
+'''
 empty_commit_marker = 'label("empty", "(empty)")'
 description_placeholder = '''
 label("description placeholder", "(no description set)")
