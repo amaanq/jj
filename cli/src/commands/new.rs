@@ -15,6 +15,7 @@
 use std::collections::HashSet;
 use std::io::Write as _;
 
+use bstr::ByteVec as _;
 use clap_complete::ArgValueCompleter;
 use itertools::Itertools as _;
 use jj_lib::backend::CommitId;
@@ -32,6 +33,7 @@ use crate::command_error::CommandError;
 use crate::complete;
 use crate::description_util::add_trailers;
 use crate::description_util::join_message_paragraphs;
+use crate::text_util;
 use crate::ui::Ui;
 
 /// Create a new, empty change and (by default) edit it in the working copy
@@ -217,6 +219,25 @@ pub(crate) fn cmd_new(
     }
     commit_builder.set_description(&description);
     let new_commit = commit_builder.write(tx.repo_mut())?;
+
+    // If no explicit message was provided, evaluate default_commit_description
+    // template to potentially populate the description (e.g., for merge commits).
+    let new_commit = if description.is_empty() {
+        let default_description = {
+            let template = tx.parse_commit_template(ui, "default_commit_description")?;
+            text_util::complete_newline(template.format_plain_text(&new_commit).into_string_lossy())
+        };
+        if !default_description.trim().is_empty() {
+            tx.repo_mut()
+                .rewrite_commit(&new_commit)
+                .set_description(default_description)
+                .write()?
+        } else {
+            new_commit
+        }
+    } else {
+        new_commit
+    };
 
     let child_commits: Vec<_> = child_commit_ids
         .iter()

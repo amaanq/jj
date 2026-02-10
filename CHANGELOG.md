@@ -48,6 +48,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   between two timestamps. It can be used in conjunction with `.duration()` in
   order to obtain a human-friendly duration between two `Timestamp`s.
 
+* `jj new` now evaluates the `default_commit_description` template to
+  populate the initial commit description when no `-m` message is provided.
+
 ### Fixed bugs
 
 ## [0.38.0] - 2026-02-04
