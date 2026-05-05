@@ -246,7 +246,10 @@ async fn do_init(
                 Workspace::init_external_git(&settings, workspace_root, git_repo_path).await?;
             // Import refs first so all the reachable commits are indexed in
             // chronological order.
-            let colocated = is_colocated_git_workspace(&workspace);
+            let colocated = is_colocated_git_workspace(None, &workspace);
+            if !colocated {
+                crate::git_util::report_unexpected_git_in_workspace(ui, &workspace);
+            }
             let repo =
                 init_git_refs(ui, repo, command.string_args(), &workspace, colocated).await?;
             let mut workspace_command = command.for_workable_repo(ui, workspace, repo)?;
@@ -258,8 +261,9 @@ async fn do_init(
                 &config_env,
             )?;
             if !workspace_command.working_copy_shared_with_git() {
+                let workspace_name = workspace_command.workspace_name().to_owned();
                 let mut tx = workspace_command.start_transaction();
-                jj_lib::git::import_head(tx.repo_mut()).await?;
+                jj_lib::git::import_head(tx.repo_mut(), &workspace_name).await?;
                 if let Some(git_head_id) = tx.repo().view().git_head().as_normal().cloned() {
                     let git_head_commit = tx.repo().store().get_commit_async(&git_head_id).await?;
                     tx.check_out(&git_head_commit)?;

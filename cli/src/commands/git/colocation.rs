@@ -14,6 +14,7 @@
 
 use std::io::ErrorKind;
 use std::io::Write as _;
+use std::process::Command;
 
 use itertools::Itertools as _;
 use jj_lib::commit::Commit;
@@ -48,8 +49,18 @@ pub struct GitColocationEnableArgs {}
 /// This moves the Git repository that is at the root of the Jujutsu
 /// workspace into the .jj directory. Once this is done you will no longer
 /// be able to use Git commands directly in the Jujutsu workspace.
+///
+/// If there are secondary colocated workspaces (created with
+/// `jj workspace add --colocate`), this command will fail unless --force
+/// is specified. Without --force, you should first forget those workspaces
+/// with `jj workspace forget`.
 #[derive(clap::Args, Clone, Debug)]
-pub struct GitColocationDisableArgs {}
+pub struct GitColocationDisableArgs {
+    /// Force disabling colocation even if secondary colocated workspaces exist.
+    /// This will leave those workspaces in a broken state.
+    #[arg(long)]
+    force: bool,
+}
 
 /// Manage Jujutsu repository colocation with Git
 #[derive(clap::Subcommand, Clone, Debug)]
@@ -99,8 +110,21 @@ async fn cmd_git_colocation_status(
     // Make sure that the workspace supports git colocation commands
     workspace_supports_git_colocation_commands(&workspace_command)?;
 
-    let is_colocated = is_colocated_git_workspace(workspace_command.workspace());
-    let git_head = workspace_command.repo().view().git_head();
+    let repo = workspace_command.repo();
+    // Use None for ui to skip warning - the warning is already shown during
+    // workspace loading, and this command is just reporting status.
+    let is_colocated = is_colocated_git_workspace(None, workspace_command.workspace());
+    // Prefer this workspace's recorded HEAD; the legacy global one only
+    // tracks the default workspace. Fall back to it for repos from before
+    // per-workspace HEADs were recorded.
+    let workspace_git_head = repo
+        .view()
+        .get_workspace_git_head(workspace_command.workspace_name());
+    let git_head = if workspace_git_head.is_present() {
+        workspace_git_head
+    } else {
+        repo.view().git_head()
+    };
 
     if is_colocated {
         writeln!(ui.stdout(), "Workspace is currently colocated with Git.")?;
@@ -109,6 +133,9 @@ async fn cmd_git_colocation_status(
             ui.stdout(),
             "Workspace is currently not colocated with Git."
         )?;
+        // Explain any unexpected .git at the workspace root; regular commands
+        // only warn about broken worktree gitlinks.
+        crate::git_util::report_unexpected_git_in_workspace(ui, workspace_command.workspace());
     }
 
     // git_head should be absent in non-colocated workspace, but print the
@@ -162,8 +189,9 @@ async fn cmd_git_colocation_enable(
     // Make sure that the workspace supports git colocation commands
     workspace_supports_git_colocation_commands(&workspace_command)?;
 
-    // Then ensure that the workspace is not already colocated before proceeding
-    if is_colocated_git_workspace(workspace_command.workspace()) {
+    // Then ensure that the workspace is not already colocated before proceeding.
+    // Use None for ui - the warning is already shown during workspace loading.
+    if is_colocated_git_workspace(None, workspace_command.workspace()) {
         writeln!(ui.status(), "Workspace is already colocated with Git.")?;
         return Ok(());
     }
@@ -236,17 +264,54 @@ async fn cmd_git_colocation_enable(
 async fn cmd_git_colocation_disable(
     ui: &mut Ui,
     command: &CommandHelper,
-    _args: &GitColocationDisableArgs,
+    args: &GitColocationDisableArgs,
 ) -> Result<(), CommandError> {
     let workspace_command = command.workspace_helper(ui).await?;
 
     // Make sure that the repository supports git colocation commands
     workspace_supports_git_colocation_commands(&workspace_command)?;
 
-    // Then ensure that the repo is colocated before proceeding
-    if !is_colocated_git_workspace(workspace_command.workspace()) {
+    // Then ensure that the repo is colocated before proceeding.
+    // Use None for ui - the warning is already shown during workspace loading.
+    if !is_colocated_git_workspace(None, workspace_command.workspace()) {
         writeln!(ui.status(), "Workspace is already not colocated with Git.")?;
         return Ok(());
+    }
+
+    // Check for secondary colocated workspaces (git worktrees)
+    if !args.force {
+        let workspace_root = workspace_command.workspace_root();
+        let dot_git_path = workspace_root.join(".git");
+
+        // Use git worktree list to find secondary worktrees
+        let git_executable =
+            git::GitSettings::from_settings(workspace_command.settings())?.executable_path;
+        let output = Command::new(git_executable)
+            .arg("-C")
+            .arg(&dot_git_path)
+            .arg("worktree")
+            .arg("list")
+            .arg("--porcelain")
+            .output();
+
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Count worktrees - each worktree block starts with "worktree "
+            let worktree_count = stdout
+                .lines()
+                .filter(|l| l.starts_with("worktree "))
+                .count();
+            if worktree_count > 1 {
+                return Err(user_error(
+                    "Cannot disable colocation: secondary colocated workspaces exist.\nThese \
+                     workspaces would become broken Git worktrees.\nEither:\n  - Run `jj \
+                     workspace forget <name>` for each secondary workspace first\n  - Use --force \
+                     to disable anyway (secondary workspaces will be broken)",
+                ));
+            }
+        }
     }
 
     let workspace_root = workspace_command.workspace_root();
@@ -323,8 +388,9 @@ async fn set_git_head_to_wc_parent(
     workspace_command: &mut WorkspaceCommandHelper,
     wc_commit: &Commit,
 ) -> Result<(), CommandError> {
+    let workspace_name = workspace_command.workspace_name().to_owned();
     let mut tx = workspace_command.start_transaction();
-    git::reset_head(tx.repo_mut(), wc_commit).await?;
+    git::reset_head(tx.repo_mut(), wc_commit, &workspace_name).await?;
     if tx.repo().has_changes() {
         tx.finish(ui, "set git head to working copy parent").await?;
     }
@@ -338,6 +404,19 @@ async fn remove_git_head(
 ) -> Result<(), CommandError> {
     let mut tx = workspace_command.start_transaction();
     tx.repo_mut().set_git_head_target(RefTarget::absent());
+    // No workspace is colocated once colocation is disabled, so drop the
+    // per-workspace HEADs as well.
+    let workspace_names: Vec<_> = tx
+        .repo()
+        .view()
+        .workspace_git_heads()
+        .keys()
+        .cloned()
+        .collect();
+    for name in workspace_names {
+        tx.repo_mut()
+            .set_workspace_git_head(&name, RefTarget::absent());
+    }
     if tx.repo().has_changes() {
         tx.finish(ui, "remove git head reference").await?;
     }

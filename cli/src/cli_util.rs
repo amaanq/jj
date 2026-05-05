@@ -182,6 +182,12 @@ use crate::diff_util::DiffRenderer;
 use crate::formatter::FormatRecorder;
 use crate::formatter::Formatter;
 use crate::formatter::FormatterExt as _;
+use crate::git_util::is_colocated_git_workspace;
+#[cfg(feature = "git")]
+use crate::git_util::load_git_import_options;
+#[cfg(feature = "git")]
+use crate::git_util::print_git_export_stats;
+#[cfg(feature = "git")]
 use crate::merge_tools::DiffEditor;
 use crate::merge_tools::MergeEditor;
 use crate::merge_tools::MergeToolConfigError;
@@ -944,7 +950,16 @@ impl WorkspaceCommandEnvironment {
             base: workspace.workspace_root().to_owned(),
         };
         #[cfg(feature = "git")]
-        let working_copy_shared_with_git = crate::git_util::is_colocated_git_workspace(workspace);
+        let working_copy_shared_with_git = {
+            // Only warn about a broken .git worktree gitlink if we're going to
+            // interact with the working copy. When --ignore-working-copy is
+            // set, the user is explicitly saying they don't care about working
+            // copy state.
+            let ui_for_warning = (!command.global_args().ignore_working_copy
+                && command.should_commit_transaction())
+            .then_some(ui);
+            is_colocated_git_workspace(ui_for_warning, workspace)
+        };
         #[cfg(not(feature = "git"))]
         let working_copy_shared_with_git = false;
         let mut env = Self {
@@ -1355,17 +1370,54 @@ impl WorkspaceCommandHelper {
         git_import_export_lock: &GitImportExportLock,
     ) -> Result<(), CommandError> {
         assert!(self.may_snapshot_working_copy);
+        let workspace_name = self.workspace_name().to_owned();
+        // Check if workspace had a git_head before we start the transaction
+        let old_workspace_git_head_present = self
+            .repo()
+            .view()
+            .get_workspace_git_head(&workspace_name)
+            .is_present();
         let mut tx = self.start_transaction();
-        jj_lib::git::import_head(tx.repo_mut()).await?;
-        if !tx.repo().has_changes() {
+        let head_changed = jj_lib::git::import_head(tx.repo_mut(), &workspace_name).await?;
+        if !head_changed {
+            // No change for this workspace's git HEAD
+            if tx.repo().has_changes() {
+                // Other worktree heads may have been imported
+                let inner_tx = tx.into_inner();
+                self.user_repo = ReadonlyUserRepo::new(
+                    self.env
+                        .command
+                        .maybe_commit_transaction(inner_tx, "import git head")
+                        .await?,
+                );
+            }
             return Ok(());
         }
 
         let mut tx = tx.into_inner();
-        let old_git_head = self.repo().view().git_head().clone();
-        let new_git_head = tx.repo().view().git_head().clone();
-        if let Some(new_git_head_id) = new_git_head.as_normal() {
-            let workspace_name = self.workspace_name().to_owned();
+        let new_workspace_git_head = tx
+            .repo()
+            .view()
+            .get_workspace_git_head(&workspace_name)
+            .clone();
+        if let Some(new_git_head_id) = new_workspace_git_head.as_normal() {
+            // Check if workspace already has a WC commit with the correct parent.
+            // This avoids creating spurious commits when switching between workspaces.
+            if let Some(current_wc_id) = tx.repo().view().get_wc_commit_id(&workspace_name) {
+                let current_wc = tx.repo().store().get_commit_async(current_wc_id).await?;
+                if current_wc.parent_ids().contains(new_git_head_id) {
+                    // Workspace already has a working copy with the correct parent,
+                    // no new checkout needed
+                    self.user_repo = ReadonlyUserRepo::new(
+                        self.env
+                            .command
+                            .maybe_commit_transaction(tx, "import git head")
+                            .await?,
+                    );
+                    return Ok(());
+                }
+            }
+
             let new_git_head_commit = tx.repo().store().get_commit_async(new_git_head_id).await?;
             let wc_commit = tx
                 .repo_mut()
@@ -1388,7 +1440,7 @@ impl WorkspaceCommandHelper {
                     .finish(self.user_repo.repo.op_id().clone())
                     .await?;
             }
-            if old_git_head.is_present() {
+            if old_workspace_git_head_present {
                 writeln!(
                     ui.status(),
                     "Reset the working copy parent to the new Git HEAD."
@@ -1433,8 +1485,7 @@ impl WorkspaceCommandHelper {
         use jj_lib::git;
         let git_settings = git::GitSettings::from_settings(self.settings())?;
         let remote_settings = self.settings().remote_settings()?;
-        let import_options =
-            crate::git_util::load_git_import_options(ui, &git_settings, &remote_settings)?;
+        let import_options = load_git_import_options(ui, &git_settings, &remote_settings)?;
         let mut tx = self.start_transaction();
         let stats = git::import_refs(tx.repo_mut(), &import_options).await?;
         crate::git_util::print_git_import_stats_summary(ui, &stats)?;
@@ -2070,6 +2121,7 @@ to the current parents may contain changes from multiple commits.
             .map_err(snapshot_command_error)?;
 
         // Compare working-copy tree and operation with repo's, and reload as needed.
+        let workspace_root = self.workspace.workspace_root().to_owned();
         let mut locked_ws = self
             .workspace
             .start_working_copy_mutation()
@@ -2156,9 +2208,16 @@ to the current parents may contain changes from multiple commits.
             {
                 if wc_immutable {
                     // New working-copy commit is created on top. Reset Git HEAD and index.
-                    try_reset_git_head(ui, mut_repo, &new_wc_commit, git_import_export_lock)
-                        .await
-                        .map_err(snapshot_command_error)?;
+                    try_reset_git_head(
+                        ui,
+                        mut_repo,
+                        &new_wc_commit,
+                        &self.env.workspace_name().to_owned(),
+                        Some(&workspace_root),
+                        git_import_export_lock,
+                    )
+                    .await
+                    .map_err(snapshot_command_error)?;
                     // export_refs() is probably unnecessary because there should be no
                     // rewritten descendants, but it's harmless.
                     let stats =
@@ -2348,10 +2407,18 @@ to the current parents may contain changes from multiple commits.
         #[cfg(feature = "git")]
         if self.env.working_copy_shared_with_git && self.env.command.should_commit_transaction() {
             if let Some(wc_commit) = &maybe_new_wc_commit {
-                try_reset_git_head(ui, tx.repo_mut(), wc_commit, git_import_export_lock).await?;
+                try_reset_git_head(
+                    ui,
+                    tx.repo_mut(),
+                    wc_commit,
+                    self.workspace_name(),
+                    Some(self.workspace_root()),
+                    git_import_export_lock,
+                )
+                .await?;
             }
             let stats = jj_lib::git::export_refs(tx.repo_mut())?;
-            crate::git_util::print_git_export_stats(ui, &stats)?;
+            print_git_export_stats(ui, &stats)?;
         }
 
         self.user_repo = ReadonlyUserRepo::new(
@@ -2656,7 +2723,7 @@ pub async fn export_working_copy_changes_to_git(
     let repo = mut_repo.base_repo().as_ref();
     jj_lib::git::update_intent_to_add(repo, old_tree, new_tree).await?;
     let stats = jj_lib::git::export_refs(mut_repo)?;
-    crate::git_util::print_git_export_stats(ui, &stats)?;
+    print_git_export_stats(ui, &stats)?;
     Ok(())
 }
 #[cfg(not(feature = "git"))]
@@ -2674,6 +2741,8 @@ async fn try_reset_git_head(
     ui: &Ui,
     mut_repo: &mut MutableRepo,
     wc_commit: &Commit,
+    workspace_name: &WorkspaceName,
+    workspace_root: Option<&Path>,
     _git_import_export_lock: &GitImportExportLock,
 ) -> Result<(), CommandError> {
     use std::error::Error as _;
@@ -2683,7 +2752,9 @@ async fn try_reset_git_head(
     // This can still fail if HEAD was updated concurrently by another JJ process
     // (overlapping transaction) or a non-JJ process (e.g., git checkout). In that
     // case, the actual state will be imported on the next snapshot.
-    match jj_lib::git::reset_head(mut_repo, wc_commit).await {
+    match jj_lib::git::reset_head_at_workspace(mut_repo, wc_commit, workspace_name, workspace_root)
+        .await
+    {
         Ok(()) => Ok(()),
         Err(err @ jj_lib::git::GitResetHeadError::UpdateHeadRef(_)) => {
             writeln!(ui.warning_default(), "{err}")?;

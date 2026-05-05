@@ -18,6 +18,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed bugs
 
+* `jj util gc` no longer lets `git gc` prune registered Git worktrees of
+  colocated workspaces, which could orphan a workspace's Git side and allow
+  its working-copy commit to be garbage-collected.
+
 ## [0.44.0] - 2026-08-05
 
 ### Release highlights
@@ -110,6 +114,26 @@ None
   This is useful when you only want to absorb *part* of a commit without first
   splitting it. Any hunks that are not selected or cannot be absorbed remain in
   the source commit.
+
+* `jj workspace add` in a colocated workspace now creates the new workspace as
+  a Git worktree of the same repo, giving each workspace its own Git `HEAD`.
+  This is gated by the new `git.auto-register-worktrees` config (default
+  true); `--colocate` forces it and `--no-colocate` disables it per command.
+
+* `jj workspace forget` accepts `--cleanup` to also remove the Git worktree of
+  a colocated workspace, and `--force` (with `--cleanup`) to remove it even if
+  it has uncommitted changes.
+
+* `jj git colocation disable` now refuses to run while secondary colocated
+  workspaces exist; use `--force` to disable anyway.
+
+* Colocation is now detected for a workspace whose root contains a bare Git
+  repo in a `.git` directory backing Git worktrees.
+
+* jj no longer warns about an unrelated `.git` directory or symlink at the
+  workspace root on every command; `jj git init` and `jj git colocation
+  status` report it instead. Broken Git worktree gitlinks still warn on every
+  command, since they mean colocation silently stopped working.
 
 ### Fixed bugs
 

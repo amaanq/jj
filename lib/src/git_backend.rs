@@ -188,10 +188,11 @@ impl GitBackend {
     }
 
     fn new(
-        base_repo: gix::ThreadSafeRepository,
+        maybe_colocated: MaybeColocatedGitRepo,
         extra_metadata_store: TableStore,
         git_settings: GitSettings,
     ) -> Self {
+        let base_repo = maybe_colocated.git_repo;
         let repo = base_repo.to_thread_local();
         let root_commit_id = CommitId::from_bytes(repo.object_hash().null_ref().as_bytes());
         let root_change_id = ChangeId::from_bytes(&[0; CHANGE_ID_LENGTH]);
@@ -315,12 +316,30 @@ impl GitBackend {
             extra_path,
             repo.to_thread_local().object_hash().len_in_bytes(),
         );
-        Ok(Self::new(repo, extra_metadata_store, git_settings))
+        Ok(Self::new(
+            MaybeColocatedGitRepo { git_repo: repo },
+            extra_metadata_store,
+            git_settings,
+        ))
     }
 
     pub fn load(
         settings: &UserSettings,
         store_path: &Path,
+    ) -> Result<Self, Box<GitBackendLoadError>> {
+        Self::load_at_workspace(settings, store_path, None)
+    }
+
+    /// Loads the GitBackend, optionally detecting colocation with a workspace.
+    ///
+    /// If `workspace_root` is provided and the workspace is colocated (has a
+    /// `.git` that points to the same underlying repo), the backend will use
+    /// the workspace's git worktree. This enables proper HEAD management for
+    /// secondary colocated workspaces.
+    pub fn load_at_workspace(
+        settings: &UserSettings,
+        store_path: &Path,
+        workspace_root: Option<&Path>,
     ) -> Result<Self, Box<GitBackendLoadError>> {
         let git_repo_path = {
             let target_path = store_path.join("git_target");
@@ -334,18 +353,25 @@ impl GitBackend {
                 .context(&git_repo_path)
                 .map_err(GitBackendLoadError::Path)?
         };
-        let repo = gix::ThreadSafeRepository::open_opts(
-            git_repo_path,
-            gix_open_opts_from_settings(settings),
-        )
-        .map_err(GitBackendLoadError::OpenRepository)?;
+        let open_opts = gix_open_opts_from_settings(settings);
+        let maybe_colocated =
+            MaybeColocatedGitRepo::open_automatic(&git_repo_path, workspace_root, open_opts)
+                .map_err(|e| GitBackendLoadError::OpenRepository(*e))?;
         let extra_metadata_store = TableStore::load(
             store_path.join("extra"),
-            repo.to_thread_local().object_hash().len_in_bytes(),
+            maybe_colocated
+                .git_repo
+                .to_thread_local()
+                .object_hash()
+                .len_in_bytes(),
         );
         let git_settings =
             GitSettings::from_settings(settings).map_err(GitBackendLoadError::Config)?;
-        Ok(Self::new(repo, extra_metadata_store, git_settings))
+        Ok(Self::new(
+            maybe_colocated,
+            extra_metadata_store,
+            git_settings,
+        ))
     }
 
     fn lock_git_repo(&self) -> MutexGuard<'_, gix::Repository> {
@@ -923,7 +949,14 @@ fn run_git_gc(program: &OsStr, git_dir: &Path, keep_newer: SystemTime) -> Result
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default(); // underflow
     let mut git = Command::new(program);
+    // Never prune jj-registered Git worktrees (secondary colocated workspaces).
+    // `git gc` auto-runs `git worktree prune` honoring `gc.worktreePruneExpire`
+    // (default 3 months), which would delete a live worktree's admin dir and let
+    // its detached-HEAD commit be garbage-collected. The `-c` override must precede
+    // the `gc` subcommand.
     git.arg("--git-dir=.") // turn off discovery
+        .arg("-c")
+        .arg("gc.worktreePruneExpire=never")
         .arg("gc")
         .arg(format!("--prune=@{} +0000", keep_newer.as_secs()));
     // Don't specify it by GIT_DIR/--git-dir. On Windows, the path could be
@@ -1605,6 +1638,196 @@ recover.
             source: Box::new(err),
         })?;
     Ok(id.detach())
+}
+
+/// Helper for the GitBackend to open a git repo and detect colocation.
+///
+/// A workspace is considered "colocated" when Git regards the workspace root
+/// as a working directory for the same repo that jj uses internally. This
+/// enables automatic import/export of Git refs on every jj command.
+///
+/// ## Detection Algorithm
+///
+/// Colocation is detected by comparing `common_dir()` paths (canonicalized):
+/// 1. Open the Git repository that jj's store points to
+/// 2. Attempt to open `<workspace_root>/.git` as a Git repository
+/// 3. If both succeed and their `common_dir()` paths match, we're colocated
+///
+/// The `common_dir()` comparison handles Git worktrees correctly, as all
+/// worktrees of a repository share the same common directory.
+///
+/// ## Supported Scenarios
+///
+/// - **Bare repo**: In `.jj/repo/store/git` directory (not colocated)
+/// - **Colocated non-bare**: `.git` directory at workspace root
+/// - **Git worktree**: `.git` file pointing to same repo as jj store
+/// - **Symlink**: `.git` symlink pointing to same repo as jj store
+///
+/// ## Corner Cases
+///
+/// When detection fails or finds a mismatch, jj is not colocated but may warn
+/// the user (see `report_unexpected_git_in_workspace` in
+/// `cli/src/git_util.rs`):
+///
+/// - **gix::open fails**: Not colocated (e.g., broken worktree, invalid `.git`
+///   file)
+/// - **Canonicalization fails**: Assume not colocated (logged at debug level)
+/// - **common_dir mismatch**: Not colocated (`.git` exists but points
+///   elsewhere)
+pub(crate) struct MaybeColocatedGitRepo {
+    pub git_repo: gix::ThreadSafeRepository,
+}
+
+impl MaybeColocatedGitRepo {
+    /// Opens the Git repository and detects colocation with the workspace.
+    ///
+    /// First opens the repository at `store_repo_path` (which may be bare).
+    /// If `workspace_root` is provided, attempts to detect if the workspace
+    /// is colocated by checking for a `.git` directory/file/symlink that
+    /// points to the same underlying Git repository.
+    ///
+    /// Returns a `MaybeColocatedGitRepo` with the workspace's git repo if:
+    /// - A `.git` exists at the workspace root
+    /// - It can be opened as a Git repository
+    /// - Its `common_dir()` matches the store repo's `common_dir()`
+    ///
+    /// Otherwise returns the store repo.
+    pub(crate) fn open_automatic(
+        store_repo_path: &Path,
+        workspace_root: Option<&Path>,
+        open_opts: gix::open::Options,
+    ) -> Result<Self, Box<gix::open::Error>> {
+        let maybe = Self::open_store_repo(store_repo_path, open_opts.clone())?;
+        if let Some(workspace_root) = workspace_root {
+            return Ok(maybe.try_detect_colocated_workspace(workspace_root, open_opts));
+        }
+        Ok(maybe)
+    }
+
+    fn open_store_repo(
+        store_repo_path: &Path,
+        open_opts: gix::open::Options,
+    ) -> Result<Self, Box<gix::open::Error>> {
+        let git_repo = gix::ThreadSafeRepository::open_opts(store_repo_path, open_opts)?;
+
+        Ok(Self { git_repo })
+    }
+
+    /// Try to open `<workspace_root>/.git` as a git repository.
+    ///
+    /// If it succeeds, and the commondir matches jj's backing repo, then the
+    /// workspace is colocated, and we return the newly opened repository.
+    ///
+    /// Easy to sanity check with git -- if `git` works and addresses the same
+    /// underlying repo (commondir), then the workspace will be colocated. So
+    /// things like worktrees, symlinks, etc just work.
+    fn try_detect_colocated_workspace(
+        self,
+        workspace_root: &Path,
+        open_opts: gix::open::Options,
+    ) -> Self {
+        let Ok(workspace_repo) =
+            gix::ThreadSafeRepository::open_opts(workspace_root.join(".git"), open_opts)
+        else {
+            // If gix can't open it, we are not colocated.
+            return self;
+        };
+
+        if !common_dirs_match(
+            &self.git_repo.to_thread_local(),
+            &workspace_repo.to_thread_local(),
+        ) {
+            return self;
+        }
+
+        Self {
+            git_repo: workspace_repo,
+        }
+    }
+}
+
+/// Whether two gix repositories share the same (canonicalized) common
+/// directory, i.e. are the same repository possibly seen through different
+/// worktrees.
+///
+/// Especially for worktrees, common_dir() returns paths with ../.. in them,
+/// usually. Must canonicalize.
+fn common_dirs_match(repo_a: &gix::Repository, repo_b: &gix::Repository) -> bool {
+    let canonical = |repo: &gix::Repository| {
+        let raw = repo.common_dir().to_owned();
+        raw.canonicalize()
+            .inspect_err(|err| {
+                tracing::debug!(
+                    ?err,
+                    ?raw,
+                    "Failed to canonicalize common_dir, assuming not colocated"
+                );
+            })
+            .ok()
+    };
+    match (canonical(repo_a), canonical(repo_b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// How a workspace root relates to this backend's Git repository.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceColocation {
+    /// The workspace root is a working directory (or worktree) of the
+    /// backend's Git repo.
+    Colocated,
+    /// The workspace root has no `.git` at all.
+    NoDotGit,
+    /// The workspace root has a `.git`, but it is unreadable or belongs to a
+    /// different repository.
+    UnrelatedDotGit,
+}
+
+impl GitBackend {
+    /// Determines whether the workspace at `workspace_root` is colocated with
+    /// this backend's Git repository.
+    ///
+    /// This is a query on the current filesystem state, independent of how the
+    /// backend itself was opened, so it also works for backends created
+    /// without workspace context (e.g. during `jj git init`).
+    pub fn check_workspace_colocation(&self, workspace_root: &Path) -> WorkspaceColocation {
+        let backend_repo = self.git_repo();
+        if let Some(workdir) = backend_repo.workdir() {
+            if workdir == workspace_root {
+                return WorkspaceColocation::Colocated;
+            }
+            // The workdir might be resolved from the real ".git" path if
+            // ".git" is a symlink, so also compare against the canonicalized
+            // parent of ".git".
+            if let Ok(dot_git_canonical) = workspace_root.join(".git").canonicalize()
+                && workdir.canonicalize().ok().as_deref() == dot_git_canonical.parent()
+            {
+                return WorkspaceColocation::Colocated;
+            }
+        }
+
+        // The workspace may still be colocated via a git worktree (a ".git"
+        // gitlink file), or, for a bare repo backing worktrees, via the bare
+        // ".git" directory at the workspace root itself.
+        let dot_git_path = workspace_root.join(".git");
+        if !dot_git_path.exists() {
+            return WorkspaceColocation::NoDotGit;
+        }
+        match gix::ThreadSafeRepository::open_opts(&dot_git_path, gix::open::Options::isolated()) {
+            Ok(workspace_repo) => {
+                if common_dirs_match(&backend_repo, &workspace_repo.to_thread_local()) {
+                    WorkspaceColocation::Colocated
+                } else {
+                    WorkspaceColocation::UnrelatedDotGit
+                }
+            }
+            Err(err) => {
+                tracing::debug!(?err, ?dot_git_path, "Failed to open workspace as git repo");
+                WorkspaceColocation::UnrelatedDotGit
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -3290,7 +3290,7 @@ mod tests {
             env.render_ok("self.short(65536)", &id), @"08a70ab33d7143b7130ed8594d8216ef688623c0");
         insta::assert_snapshot!(
             env.render_ok("self.short(-100)", &id),
-            @"<Error: out of range integral type conversion attempted>");
+            @"<Error: number too small to fit in target type>");
 
         insta::assert_snapshot!(env.render_ok("self.shortest()", &id), @"08");
         insta::assert_snapshot!(env.render_ok("self.shortest(0)", &id), @"08");
@@ -3327,7 +3327,7 @@ mod tests {
             env.render_ok("self.short(65536)", &id), @"kkmpptxzrspxrzommnulwmwkkqwworpl");
         insta::assert_snapshot!(
             env.render_ok("self.short(-100)", &id),
-            @"<Error: out of range integral type conversion attempted>");
+            @"<Error: number too small to fit in target type>");
 
         insta::assert_snapshot!(env.render_ok("self.shortest()", &id), @"k");
         insta::assert_snapshot!(env.render_ok("self.shortest(0)", &id), @"k");
