@@ -973,6 +973,11 @@ fn run_git_gc(program: &OsStr, git_dir: &Path, keep_newer: SystemTime) -> Result
         .unwrap_or_default(); // underflow
     let mut git = Command::new(program);
     git.arg("--git-dir=.") // turn off discovery
+        // `git gc` prunes worktrees older than gc.worktreePruneExpire (3 months
+        // by default), which would drop the HEAD of a workspace whose directory
+        // is merely unreachable. The -c must precede the subcommand.
+        .arg("-c")
+        .arg("gc.worktreePruneExpire=never")
         .arg("gc")
         .arg(format!("--prune=@{} +0000", keep_newer.as_secs()));
     // Don't specify it by GIT_DIR/--git-dir. On Windows, the path could be
