@@ -62,8 +62,13 @@ a comparison with Git, including how workflows are different, see the
 * **Shallow clones: Kind of.** Shallow commits all have the virtual root commit
   as their parent. However, deepening or fully unshallowing a repository is
   currently not yet supported and will cause issues.
-* **git-worktree: No.** However, there's native support for multiple working
-  copies backed by a single repo. See the `jj workspace` family of commands.
+* **git-worktree: Yes, for colocated workspaces.** `jj workspace add` registers
+  a matching [Git worktree](https://git-scm.com/docs/git-worktree) when the
+  current workspace is colocated and `git.colocate` is `true`, and `--colocate`
+  or `--no-colocate` overrides that per invocation. See
+  [Secondary colocated workspaces](#secondary-colocated-workspaces). Workspaces
+  also work without Git, backed by a single repo. See the `jj workspace` family
+  of commands.
 * **Sparse checkouts: No.** However, there's native support for sparse
   checkouts. See the `jj sparse` command.
 * **Signed commits: Yes.**
@@ -169,6 +174,22 @@ Colocation can be disabled because it does have some disadvantages:
   are working on the known ones, and are not aware of any major ones. Please
   report any new ones you find, or if any of the known bugs are less minor than
   they appear.
+
+### Secondary colocated workspaces
+
+`jj workspace add` in a colocated workspace also creates a Git worktree for the
+new workspace, so `git` commands work inside it too. Pass `--no-colocate` to opt
+out, or `--colocate` to opt in from a workspace that is not itself colocated.
+Each workspace keeps its own Git `HEAD`, so committing with `git` in one
+workspace does not disturb the others. `jj workspace forget` unregisters the
+worktree and leaves the directory contents alone.
+
+Because a colocated workspace's `HEAD` is the source of truth for changes made
+outside jj, wiring up a worktree by hand is risky. If its `HEAD` does not match
+the workspace's working-copy parent (`@-`), the next `jj` command will import
+that `HEAD` and move the working-copy commit onto it. Prefer `jj workspace add`.
+If you must create the worktree metadata yourself, point its `HEAD` at `@-`
+first.
 
 ### Converting a workspace into a colocated workspace
 
